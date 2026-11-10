@@ -1,0 +1,8 @@
+.env
+data/
+deploy/*.zip
+# shaxsiy: ariza matni va Claude Code konteksti (do'kon ma'lumotlari bor)
+ARIZA_*.md
+CLAUDE.md
+__pycache__/
+*.pyc
