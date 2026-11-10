@@ -6,6 +6,8 @@ ARIZA_*.md
 SUHBAT_*.md
 RAQOBAT_*.md
 REJA_*.md
+ANALIZ_*.md
+.claude/
 CLAUDE.md
 __pycache__/
 *.pyc

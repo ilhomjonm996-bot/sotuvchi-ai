@@ -9,6 +9,7 @@ from flask import Flask, abort, flash, redirect, render_template, request, send_
 from jinja2 import DictLoader
 
 import ai_card
+import checks
 import config
 import db
 import profit
@@ -69,7 +70,7 @@ input.sm{width:110px;padding:6px 8px}label{font-size:13px;color:var(--muted);dis
 .legend{display:flex;gap:16px;font-size:13px;color:var(--muted);margin-top:6px}.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px}
 </style></head><body>
 <header><a class="logo" href="/">Sotuvchi <span>AI</span></a>
-<nav>{% for href, name in [("/","Bosh sahifa"),("/products","Tovarlar"),("/prices","Narxlar"),("/card","AI kartochka"),("/settings","Sozlamalar")] %}
+<nav>{% for href, name in [("/","Bosh sahifa"),("/qarorlar","Qarorlar"),("/products","Tovarlar"),("/prices","Narxlar"),("/card","AI kartochka"),("/settings","Sozlamalar")] %}
 <a href="{{href}}" class="{{'on' if active==href}}">{{name}}</a>{% endfor %}</nav></header>
 <main>
 {% if demo %}<div class="banner">🧪 <b>Demo rejim:</b> namunaviy do'kon ma'lumotlari ko'rsatilmoqda. Haqiqiy do'kon Uzum Seller API kaliti orqali ulanadi.</div>{% endif %}
@@ -84,6 +85,8 @@ function copyText(id,btn){const t=document.getElementById(id).innerText;navigato
 
 DASHBOARD = r"""{% extends "base.html" %}{% block title %}Bosh sahifa{% endblock %}{% block body %}
 <h1>{{ r.shop_name }}</h1><p class="sub">Sof foyda hisoboti — Uzum komissiyasi, logistika, tannarx, soliq va xarajatlar hisobga olingan</p>
+{% if decisions %}<div class="card" style="margin-bottom:16px;border-color:#cbb8ff"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><b>☀️ Bugungi qarorlar</b><a href="/qarorlar" class="small">Hammasi ({{ decisions_total }}) →</a></div>
+{% for d in decisions %}<div style="display:flex;gap:12px;align-items:flex-start;margin-top:12px"><span style="font-size:18px">{{ d.icon }}</span><div style="flex:1"><b>{{ d.title }}</b>{% if d.money %} <span class="pill p-{{ 'loss' if d.level=='red' else 'low' if d.level=='orange' else 'ok' }}">~{{ f(d.money) }} so'm/oy</span>{% endif %}<div class="small muted">{{ d.text }}</div><div class="small">👉 {{ d.action }}</div></div></div>{% endfor %}</div>{% endif %}
 <div class="tabs">{% for k, v in periods.items() %}<a href="/?p={{k}}" class="{{'on' if k==r.period}}">{{v}}</a>{% endfor %}</div>
 <div class="grid g4">
  <div class="card kpi"><div class="l">Tushum</div><div class="v">{{ f(t.revenue) }}</div><div class="s">so'm · {{ t.qty|int }} dona sotildi</div></div>
@@ -204,6 +207,14 @@ SETTINGS = r"""{% extends "base.html" %}{% block title %}Sozlamalar{% endblock %
 </table><p class="small muted">Kalitlar faqat loyiha papkasidagi <code>.env</code> faylida saqlanadi. O'zgartirgandan keyin dasturni qayta ishga tushiring.</p></div></div>
 {% endblock %}"""
 
+QARORLAR = r"""{% extends "base.html" %}{% block title %}Qarorlar{% endblock %}{% block body %}
+<h1>Qarorlar</h1><p class="sub">AI agentlar do'koningizni tekshirib topgan muammolar va imkoniyatlar — avval pul hozir ketayotganlari. Oylik summalar taxminiy.</p>
+{% for d in items %}<div class="card" style="margin-bottom:12px;display:flex;gap:14px;align-items:flex-start;{{ 'border-color:#f3c1c8' if d.level=='red' }}">
+<span style="font-size:22px">{{ d.icon }}</span><div style="flex:1"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><b>{{ d.title }}</b>{% if d.money %}<span class="pill p-{{ 'loss' if d.level=='red' else 'low' if d.level=='orange' else 'ok' }}">~{{ f(d.money) }} so'm/oy</span>{% endif %}</div>
+<p style="margin:6px 0" class="muted">{{ d.text }}</p><p style="margin:0">👉 {{ d.action }}</p><p class="small muted" style="margin:6px 0 0">Agent: {{ names.get(d.source, d.source) }}</p></div></div>
+{% else %}<div class="card"><p>✅ Hozircha muhim muammo topilmadi.</p></div>{% endfor %}
+{% endblock %}"""
+
 LOGIN = r"""{% extends "base.html" %}{% block body %}<form class="card" method="post" style="max-width:360px;margin:60px auto">
 <h1>Kirish</h1><p class="sub">Panel paroli</p><input type="password" name="password" autofocus><p><button class="btn">Kirish</button></p></form>{% endblock %}"""
 
@@ -212,7 +223,7 @@ ERROR = r"""{% extends "base.html" %}{% block body %}<div class="card"><h1>Xatol
 app.jinja_loader = DictLoader({
     "base.html": BASE, "dashboard.html": DASHBOARD, "products.html": PRODUCTS, "prices.html": PRICES,
     "card_form.html": CARD_FORM, "card_view.html": CARD_VIEW, "settings.html": SETTINGS,
-    "login.html": LOGIN, "error.html": ERROR,
+    "login.html": LOGIN, "error.html": ERROR, "qarorlar.html": QARORLAR,
 })
 app.jinja_env.filters["basename"] = lambda p: Path(p or "").name
 
@@ -259,8 +270,15 @@ def dashboard():
     if period not in profit.PERIODS:
         period = profit.default_period()
     r = profit.report(period)
+    found = checks.run_all()
     return render_template("dashboard.html", r=r, t=r["totals"], periods=profit.PERIODS,
-                           series=profit.series(period))
+                           series=profit.series(period), decisions=found[:3], decisions_total=len(found))
+
+
+@app.route("/qarorlar")
+def qarorlar():
+    names = {"saqlash": "Ombor nazoratchisi", "qaytish": "Qaytish tahlilchisi", "tugagan": "Qoldiq nazoratchisi"}
+    return render_template("qarorlar.html", items=checks.run_all(), names=names)
 
 
 @app.route("/products", methods=["GET", "POST"])

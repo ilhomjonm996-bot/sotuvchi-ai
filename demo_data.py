@@ -44,6 +44,12 @@ for pid, sku, title, price, cost, comm, daily, logi in _CATALOG:
     })
 
 
+# Tekshiruvlar (checks/) uchun namunaviy signallar
+PRODUCTS[0].update(returnedPercentage=41.0, quantitySold=350, quantityReturned=240)  # ko'ylak — o'lcham muammosi
+PRODUCTS[4]["skuList"][0]["quantityActive"] = 0    # quloqchin — tugagan
+PRODUCTS[7]["skuList"][0]["quantityActive"] = 12   # g'ilof — 2–3 kunda tugaydi
+
+
 def _build_orders(days: int = 400):
     rng = random.Random(42)
     now = int(time.time() * 1000)
@@ -96,6 +102,9 @@ def _build_expenses(days: int = 400):
         if d % 3 == 0:
             rows.append({"name": "Reklama (CPO)", "source": "ADVERTISING", "amount": rng.randint(20, 90) * 1000,
                          "type": "OUTCOME", "dateCreated": ts})
+        if d < 92:  # qaytgan tovar omborda yotibdi — har kuni pullik saqlash
+            rows.append({"name": "5004417 - sonli yukxat boʻyicha yigʻilgan qaytarishni saqlash xizmatlari uchun toʻlov",
+                         "source": "Ombor", "amount": 1, "paymentPrice": 1000, "type": "OUTCOME", "dateCreated": ts})
         if rng.random() < 0.02:
             rows.append({"name": "Jarima: kechikkan topshirish", "source": "PENALTY", "amount": 50000,
                          "type": "OUTCOME", "dateCreated": ts})

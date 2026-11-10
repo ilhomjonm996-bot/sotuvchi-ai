@@ -52,6 +52,7 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 # Botdan faqat shu chat foydalana oladi. Bo'sh bo'lsa, /start bosgan birinchi odam egasi bo'ladi.
 TELEGRAM_OWNER_ID = os.environ.get("TELEGRAM_OWNER_ID", "").strip()
 DAILY_REPORT_HOUR = int(_float("DAILY_REPORT_HOUR", 21))
+MORNING_REPORT_HOUR = int(_float("MORNING_REPORT_HOUR", 9))  # ertalabki "bugungi qarorlar" xabari
 
 # --- Biznes sozlamalari (standart qiymatlar, panelda o'zgartirsa bo'ladi) ---
 DEFAULT_TAX_RATE = _float("TAX_RATE", 0.04)            # aylanma solig'i (4%)

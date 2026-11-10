@@ -148,11 +148,16 @@ def shop_id():
     return int(shop()["id"])
 
 
+def products_raw():
+    """Uzum'dan kelgan tovarlar (product darajasidagi signallar bilan: returnedPercentage, status ...)."""
+    return _cached(("prods", shop_id()), lambda: client.products(shop_id()))
+
+
 def skus():
     """Barcha SKU lar tekis ro'yxat ko'rinishida."""
     def load():
         out = []
-        for p in client.products(shop_id()):
+        for p in products_raw():
             for s in p.get("skuList") or []:
                 if s.get("archived"):
                     continue

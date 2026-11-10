@@ -18,6 +18,7 @@ from datetime import datetime
 import requests
 
 import ai_card
+import checks
 import config
 import db
 import profit
@@ -32,6 +33,7 @@ http = requests.Session()
 
 HELP = (
     "🤖 <b>Sotuvchi AI</b> — Uzum do'koningiz uchun AI yordamchi\n\n"
+    "/qarorlar — bugungi qarorlar: pul qayerda ketyapti va nima qilish kerak\n"
     "/hisobot — sof foyda (bugun / hafta / oy / yil)\n"
     "/tovarlar — eng foydali va zararli tovarlar\n"
     "/narx — narx takliflari, tasdiqlash\n"
@@ -257,7 +259,9 @@ def handle_message(msg):
         return handle_photo(chat_id, msg)
     cmd, _, args = text.partition(" ")
     cmd = cmd.split("@")[0].lower()
-    if cmd == "/hisobot":
+    if cmd == "/qarorlar":
+        send(chat_id, decisions_message())
+    elif cmd == "/hisobot":
         send(chat_id, profit.report_text("today"), PERIOD_KB)
     elif cmd == "/tovarlar":
         cmd_tovarlar(chat_id)
@@ -270,12 +274,22 @@ def handle_message(msg):
 
 
 # ---------- kunlik hisobot ----------
+def decisions_message():
+    return checks.decisions_text(profit.shop().get("name", ""), limit=3, fmt=profit.fmt)
+
+
 def daily_check():
     oid = owner_id()
     if not oid:
         return
     now = datetime.now(profit.TZ)
     today = now.strftime("%Y-%m-%d")
+    if now.hour >= config.MORNING_REPORT_HOUR and db.get_setting("last_morning") != today:
+        db.set_setting("last_morning", today)
+        try:
+            send(oid, decisions_message())
+        except Exception as e:
+            log.exception("Ertalabki qarorlar xatosi: %s", e)
     if now.hour >= config.DAILY_REPORT_HOUR and db.get_setting("last_daily") != today:
         db.set_setting("last_daily", today)
         try:
@@ -293,6 +307,7 @@ def main():
         print("Bot tokeni noto'g'ri yoki internet yo'q.")
         return
     tg("setMyCommands", commands=[
+        {"command": "qarorlar", "description": "Bugungi qarorlar: pul qayerda ketyapti"},
         {"command": "hisobot", "description": "Sof foyda hisoboti"},
         {"command": "tovarlar", "description": "Foydali va zararli tovarlar"},
         {"command": "narx", "description": "Narx takliflari"},
