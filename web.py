@@ -86,7 +86,7 @@ function copyText(id,btn){const t=document.getElementById(id).innerText;navigato
 DASHBOARD = r"""{% extends "base.html" %}{% block title %}Bosh sahifa{% endblock %}{% block body %}
 <h1>{{ r.shop_name }}</h1><p class="sub">Sof foyda hisoboti — Uzum komissiyasi, logistika, tannarx, soliq va xarajatlar hisobga olingan</p>
 {% if decisions %}<div class="card" style="margin-bottom:16px;border-color:#cbb8ff"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><b>☀️ Bugungi qarorlar</b><a href="/qarorlar" class="small">Hammasi ({{ decisions_total }}) →</a></div>
-{% for d in decisions %}<div style="display:flex;gap:12px;align-items:flex-start;margin-top:12px"><span style="font-size:18px">{{ d.icon }}</span><div style="flex:1"><b>{{ d.title }}</b>{% if d.money %} <span class="pill p-{{ 'loss' if d.level=='red' else 'low' if d.level=='orange' else 'ok' }}">~{{ f(d.money) }} so'm/oy</span>{% endif %}<div class="small muted">{{ d.text }}</div><div class="small">👉 {{ d.action }}</div></div></div>{% endfor %}</div>{% endif %}
+{% for d in decisions %}<div style="display:flex;gap:12px;align-items:flex-start;margin-top:12px"><span style="font-size:18px">{{ d.icon }}</span><div style="flex:1"><b>{{ d.title }}</b>{% if d.money %} <span class="pill p-{{ 'loss' if d.level=='red' else 'low' if d.level=='orange' else 'ok' }}">~{{ f(d.money) }} so'm{{ ' bir martalik' if d.once else '/oy' }}</span>{% endif %}<div class="small muted">{{ d.text }}</div><div class="small">👉 {{ d.action }}</div></div></div>{% endfor %}</div>{% endif %}
 <div class="tabs">{% for k, v in periods.items() %}<a href="/?p={{k}}" class="{{'on' if k==r.period}}">{{v}}</a>{% endfor %}</div>
 <div class="grid g4">
  <div class="card kpi"><div class="l">Tushum</div><div class="v">{{ f(t.revenue) }}</div><div class="s">so'm · {{ t.qty|int }} dona sotildi</div></div>
@@ -208,9 +208,9 @@ SETTINGS = r"""{% extends "base.html" %}{% block title %}Sozlamalar{% endblock %
 {% endblock %}"""
 
 QARORLAR = r"""{% extends "base.html" %}{% block title %}Qarorlar{% endblock %}{% block body %}
-<h1>Qarorlar</h1><p class="sub">AI agentlar do'koningizni tekshirib topgan muammolar va imkoniyatlar — avval pul hozir ketayotganlari. Oylik summalar taxminiy.</p>
+<h1>Qarorlar</h1><p class="sub">AI agentlar do'koningizni tekshirib topgan muammolar va imkoniyatlar — avval pul hozir ketayotganlari. Summalar taxminiy.</p>
 {% for d in items %}<div class="card" style="margin-bottom:12px;display:flex;gap:14px;align-items:flex-start;{{ 'border-color:#f3c1c8' if d.level=='red' }}">
-<span style="font-size:22px">{{ d.icon }}</span><div style="flex:1"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><b>{{ d.title }}</b>{% if d.money %}<span class="pill p-{{ 'loss' if d.level=='red' else 'low' if d.level=='orange' else 'ok' }}">~{{ f(d.money) }} so'm/oy</span>{% endif %}</div>
+<span style="font-size:22px">{{ d.icon }}</span><div style="flex:1"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><b>{{ d.title }}</b>{% if d.money %}<span class="pill p-{{ 'loss' if d.level=='red' else 'low' if d.level=='orange' else 'ok' }}">~{{ f(d.money) }} so'm{{ ' bir martalik' if d.once else '/oy' }}</span>{% endif %}</div>
 <p style="margin:6px 0" class="muted">{{ d.text }}</p><p style="margin:0">👉 {{ d.action }}</p><p class="small muted" style="margin:6px 0 0">Agent: {{ names.get(d.source, d.source) }}</p></div></div>
 {% else %}<div class="card"><p>✅ Hozircha muhim muammo topilmadi.</p></div>{% endfor %}
 {% endblock %}"""

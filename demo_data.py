@@ -126,6 +126,16 @@ def _build_expenses(days: int = 400):
 FINANCE_ORDERS = _build_orders()
 EXPENSES = _build_expenses()
 
+# Kompensatsiya radari uchun: bekor qilingan buyurtmalar logistikasi qaytarilmagan + bitta takroriy yechish
+PRODUCTS[0]["quantityDefected"] = 2
+for _o in [o for o in FINANCE_ORDERS if o["status"] == "CANCELED"][-6:]:
+    EXPENSES.append({"name": f"Buyurtma № {_o['orderId']} uchun logistika xizmatlari uchun to'lov.", "source": "Logistika",
+                     "amount": 1, "paymentPrice": 6000, "type": "OUTCOME", "dateCreated": _o["date"]})
+_dup = [o for o in FINANCE_ORDERS if o["status"] == "TO_WITHDRAW"][-1]
+for _ in range(3):
+    EXPENSES.append({"name": f"Buyurtma № {_dup['orderId']} uchun logistika xizmatlari uchun to'lov.", "source": "Logistika",
+                     "amount": 1, "paymentPrice": 7000, "type": "OUTCOME", "dateCreated": _dup["date"]})
+
 
 def apply_price(product_id: int, sku_id: int, sell_price: int, full_price: int) -> None:
     """Demo rejimda narx o'zgarishini xotirada saqlaydi."""

@@ -15,14 +15,16 @@ Yangi tekshiruvchi qo'shish: checks/ ichida run() funksiyali fayl yozing va CHEC
 import logging
 from html import escape as _esc
 
-from . import aksiya, kartochka, qaytish, reyting, saqlash, tugagan
+from . import aksiya, kartochka, kompensatsiya, qaytish, reklama, reyting, saqlash, tugagan
 
 log = logging.getLogger("checks")
 
-CHECKS = [saqlash.run, aksiya.run, qaytish.run, reyting.run, tugagan.run, kartochka.run]
+CHECKS = [saqlash.run, aksiya.run, reklama.run, kompensatsiya.run, qaytish.run, reyting.run,
+          tugagan.run, kartochka.run]
 AGENT_NAMES = {
     "saqlash": "Ombor nazoratchisi", "aksiya": "Aksiya filtri", "qaytish": "Qaytish tahlilchisi",
     "reyting": "Reyting nazoratchisi", "tugagan": "Qoldiq nazoratchisi", "kartochka": "Kartochka auditori",
+    "reklama": "Marketolog (reklama)", "kompensatsiya": "Kompensatsiya radari",
 }
 LEVEL_ORDER = {"red": 0, "orange": 1, "green": 2}
 ICONS = {"red": "🔴", "orange": "🟠", "green": "🟢"}
@@ -54,7 +56,7 @@ def decisions_text(shop_name="", limit=3, fmt=lambda x: f"{x:,.0f}"):
         return f"☀️ <b>Bugungi qarorlar</b> — {escape(shop_name)}\n\n✅ Muhim muammo topilmadi."
     lines = [f"☀️ <b>Bugungi qarorlar</b> — {escape(shop_name)}", ""]
     for i, f in enumerate(found[:limit], 1):
-        money = f" · ~{fmt(f['money'])} so'm/oy" if f.get("money") else ""
+        money = (f" · ~{fmt(f['money'])} so'm" + (" bir martalik" if f.get("once") else "/oy")) if f.get("money") else ""
         lines += [f"{i}) {f['icon']} <b>{escape(f['title'])}</b>{money}",
                   f"   {escape(f['text'])}",
                   f"   👉 {escape(f['action'])}", ""]
