@@ -48,6 +48,18 @@ for pid, sku, title, price, cost, comm, daily, logi in _CATALOG:
 PRODUCTS[0].update(returnedPercentage=41.0, quantitySold=350, quantityReturned=240)  # ko'ylak — o'lcham muammosi
 PRODUCTS[4]["skuList"][0]["quantityActive"] = 0    # quloqchin — tugagan
 PRODUCTS[7]["skuList"][0]["quantityActive"] = 12   # g'ilof — 2–3 kunda tugaydi
+_now = int(time.time() * 1000)
+PRODUCTS[5]["skuList"][0]["specialOffer"] = {      # kamar — zarar narxdagi aksiyada turibdi
+    "inOffer": True, "hasRecommendation": True, "mechanicType": "UZUM_PROMO", "mechanicPrice": 69000,
+    "endDate": _now + 5 * _DAY_MS, "promoName": "Qora juma"}
+PRODUCTS[2]["skuList"][0]["specialOffer"] = {      # pichoqlar — foydali aksiya, hali qo'shilmagan
+    "inOffer": False, "hasRecommendation": True, "mechanicType": "UZUM_PROMO", "mechanicPrice": 109000,
+    "endDate": _now + 9 * _DAY_MS, "promoName": "Qishki chegirmalar"}
+PRODUCTS[6].update(rating="3.2", feedbackQuantity=14)                       # yostiq jildi — past reyting
+PRODUCTS[1]["moderationStatus"] = {"value": "HAS_COMPLAINTS", "title": "Izohlar bor"}
+PRODUCTS[3].update(viewers=1240, conversion=0.4)                            # termos — past konversiya
+for _i in (1, 4, 6):
+    PRODUCTS[_i]["allFiltersFilled"] = False
 
 
 def _build_orders(days: int = 400):

@@ -277,8 +277,7 @@ def dashboard():
 
 @app.route("/qarorlar")
 def qarorlar():
-    names = {"saqlash": "Ombor nazoratchisi", "qaytish": "Qaytish tahlilchisi", "tugagan": "Qoldiq nazoratchisi"}
-    return render_template("qarorlar.html", items=checks.run_all(), names=names)
+    return render_template("qarorlar.html", items=checks.run_all(), names=checks.AGENT_NAMES)
 
 
 @app.route("/products", methods=["GET", "POST"])
