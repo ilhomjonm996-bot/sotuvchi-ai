@@ -1,14 +1,19 @@
 """
-Telegram bot (faqat `requests`, long polling). Ishga tushirish:  py bot.py
+Telegram bot — ko'p mijozli (faqat `requests`, long polling). Ishga tushirish:  py bot.py
 
-Buyruqlar:
-  /start                   — egani ro'yxatdan o'tkazish
-  /hisobot                 — sof foyda hisoboti (bugun / hafta / oy / yil)
-  /tovarlar                — eng foydali va zararli tovarlar
-  /narx                    — narx takliflari (Tasdiqlash / Rad etish)
-  /tannarx SKU narx [qo'shimcha] — tannarx kiritish
-  Rasm + izoh              — AI kartochka
-Har kuni DAILY_REPORT_HOUR da (Toshkent vaqti) kunlik hisobot yuboriladi.
+Har bir Telegram foydalanuvchisi — alohida sotuvchi. Har bir xabar o'sha sotuvchining
+kontekstida (tenant.use) qayta ishlanadi, shuning uchun hech kim boshqaning ma'lumotini ko'rmaydi.
+
+Ulanish:
+  /start   — ro'yxatdan o'tish
+  /ulash   — Uzum API kalitini ulash (xabar darhol o'chiriladi, kalit shifrlanadi)
+  /demo    — namunaviy do'kon bilan sinab ko'rish
+  /dokon   — bir nechta do'kon bo'lsa, tanlash
+  /panel   — veb-panelga bir martalik kirish havolasi
+  /uzish   — kalit va barcha ma'lumotni o'chirish
+Ish:
+  /qarorlar, /hisobot, /tovarlar, /narx, /tannarx SKU narx [qo'shimcha], rasm + izoh → kartochka
+Har kuni ertalab (MORNING_REPORT_HOUR) qarorlar, kechqurun (DAILY_REPORT_HOUR) hisobot — har bir sotuvchiga.
 """
 import html
 import logging
@@ -22,7 +27,9 @@ import checks
 import config
 import db
 import profit
-from uzum_client import client
+import secure
+import tenant
+from uzum_client import UzumClient, UzumError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("bot")
@@ -31,14 +38,34 @@ API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/"
 FILE_API = f"https://api.telegram.org/file/bot{config.TELEGRAM_BOT_TOKEN}/"
 http = requests.Session()
 
+WELCOME = (
+    "👋 <b>Sotuvchi AI</b> — Uzum do'koningiz uchun AI sotuv jamoasi.\n\n"
+    "Har kuni ertalab sizga yozaman: pul qayerda ketyapti va bugun nima qilish kerak — "
+    "zararli narxlar, aksiyalar, qaytishlar, omborda yotgan tovar, reklama va boshqalar.\n\n"
+    "Boshlash uchun:\n"
+    "🔑 /ulash — o'z do'koningizni ulang (2 daqiqa)\n"
+    "🧪 /demo — avval namunaviy do'konda sinab ko'ring"
+)
+
+CONNECT = (
+    "🔑 <b>Do'konni ulash</b>\n\n"
+    "1. <b>seller.uzum.uz</b> ga kiring\n"
+    "2. Sozlamalar → <b>API kalitlari</b> → yangi kalit yarating\n"
+    "3. Kalitni nusxalab, <b>shu chatga yuboring</b>\n\n"
+    "🔒 Kalitni olgan zahoti xabarni chatdan o'chiraman va kalitni shifrlangan holda saqlayman. "
+    "Narxlar sizning tasdig'ingizsiz hech qachon o'zgarmaydi. /uzish — istalgan payt hammasini o'chirish."
+)
+
 HELP = (
-    "🤖 <b>Sotuvchi AI</b> — Uzum do'koningiz uchun AI yordamchi\n\n"
+    "🤖 <b>Sotuvchi AI</b>\n\n"
     "/qarorlar — bugungi qarorlar: pul qayerda ketyapti va nima qilish kerak\n"
     "/hisobot — sof foyda (bugun / hafta / oy / yil)\n"
     "/tovarlar — eng foydali va zararli tovarlar\n"
     "/narx — narx takliflari, tasdiqlash\n"
     "/tannarx SKU narx [qo'shimcha] — tannarx kiritish\n"
-    "   masalan: <code>/tannarx 9001 72000 3000</code>\n\n"
+    "   masalan: <code>/tannarx 9001 72000 3000</code>\n"
+    "/panel — veb-panelga kirish havolasi\n"
+    "/dokon — do'konni almashtirish · /uzish — uzish\n\n"
     "📸 <b>Kartochka:</b> tovar rasmini yuboring, izohiga yozing:\n"
     "<code>Termos 1 litr\nrang: qora\no'lcham: 1 L\ntannarx: 40000\nyetkazish: 3000</code>"
 )
@@ -78,30 +105,72 @@ def esc(s):
     return html.escape(str(s or ""), quote=False)
 
 
-# ---------- ega ----------
-def owner_id():
-    return config.TELEGRAM_OWNER_ID or db.get_setting("tg_owner")
+# ---------- sotuvchi ----------
+def seller_for(chat_id, user=None, create=False):
+    s = db.get_seller_by_chat(chat_id)
+    if not s and create:
+        name = " ".join(x for x in ((user or {}).get("first_name"), (user or {}).get("last_name")) if x) or None
+        db.create_seller(chat_id=chat_id, name=name)
+        s = db.get_seller_by_chat(chat_id)
+    if s:
+        db.update_seller(s["id"], last_seen=int(time.time()))
+    return s
 
 
-def is_owner(chat_id):
-    return str(chat_id) == str(owner_id())
+def is_admin(chat_id):
+    s = db.get_seller_by_chat(chat_id)
+    return str(chat_id) == str(config.TELEGRAM_OWNER_ID) or (s and s["id"] == tenant.OWNER_ID)
 
 
-# ---------- buyruqlar ----------
+# ---------- ulash ----------
+def looks_like_token(text):
+    t = (text or "").strip()
+    return len(t) >= 24 and " " not in t and not t.startswith("/")
+
+
+def handle_token(chat_id, msg):
+    raw = (msg.get("text") or "").strip().replace("Bearer ", "")
+    tg("deleteMessage", chat_id=chat_id, message_id=msg["message_id"])  # kalit chatda qolmasin
+    send(chat_id, "⏳ Kalitni tekshiryapman...")
+    try:
+        shops = UzumClient(token=raw, demo=False).shops()
+    except UzumError as e:
+        return send(chat_id, f"❌ Kalit ishlamadi: {esc(e)}\n\nQayta urinib ko'ring: /ulash")
+    if not shops:
+        return send(chat_id, "❌ Bu kalit bilan birorta do'kon topilmadi. Boshqa kalit bilan urinib ko'ring: /ulash")
+    sid = tenant.current_id()
+    db.update_seller(sid, token_enc=secure.encrypt(raw), demo=0)
+    db.set_setting("state", "")
+    tenant.forget(sid)
+    profit.clear_cache()
+    log.info("Sotuvchi #%s ulandi (%s ta do'kon, kalit %s)", sid, len(shops), secure.mask(raw))
+    if len(shops) == 1:
+        return shop_chosen(chat_id, shops[0]["id"])
+    send(chat_id, f"✅ Kalit ishladi. {len(shops)} ta do'kon topildi — qaysi biri bilan ishlaymiz?", shops_kb(shops))
+
+
+def shops_kb(shops):
+    return [[{"text": s.get("name") or str(s["id"]), "callback_data": f"shop:{s['id']}"}] for s in shops[:20]]
+
+
+def shop_chosen(chat_id, shop_id, msg_id=None):
+    db.set_setting("shop_id", shop_id)
+    profit.clear_cache()
+    try:
+        name = profit.shop().get("name", "")
+        text = f"✅ <b>{esc(name)}</b> ulandi! Tahlil qilyapman..."
+        (edit(chat_id, msg_id, text) if msg_id else send(chat_id, text))
+        send(chat_id, decisions_message())
+        send(chat_id, "Boshqa buyruqlar: /hisobot /tovarlar /narx /panel\n"
+                      "Har kuni ertalab qarorlarni o'zim yuboraman.")
+    except UzumError as e:
+        send(chat_id, f"❌ Do'kon ma'lumotini olib bo'lmadi: {esc(e)}\nBoshqa do'konni tanlang: /dokon")
+
+
+# ---------- ish buyruqlari ----------
 PERIOD_KB = [[{"text": "Bugun", "callback_data": "rep:today"}, {"text": "Hafta", "callback_data": "rep:week"},
               {"text": "Oy", "callback_data": "rep:month"}, {"text": "Yil", "callback_data": "rep:year"},
               {"text": "Hammasi", "callback_data": "rep:all"}]]
-
-
-def cmd_start(chat_id, user):
-    if not owner_id():
-        db.set_setting("tg_owner", chat_id)
-        send(chat_id, f"✅ Siz do'kon egasi sifatida ro'yxatdan o'tdingiz (ID: <code>{chat_id}</code>).\n"
-                      f"Endi bot faqat sizga javob beradi.\n\n" + HELP)
-    elif is_owner(chat_id):
-        send(chat_id, HELP)
-    else:
-        send(chat_id, "Bu bot shaxsiy. Kechirasiz.")
 
 
 def cmd_tovarlar(chat_id):
@@ -128,11 +197,11 @@ def _proposal_text(p):
 
 
 def cmd_narx(chat_id):
-    n = profit.create_proposals()
+    profit.create_proposals()
     pending = profit.proposals("pending")
     if not pending:
         return send(chat_id, "✅ Hamma narxlar joyida, taklif yo'q.")
-    note = "" if client.demo else "\n⚠️ Tasdiqlansa, narx haqiqiy do'konda o'zgaradi."
+    note = "" if tenant.is_demo() else "\n⚠️ Tasdiqlansa, narx haqiqiy do'konda o'zgaradi."
     send(chat_id, f"Narx takliflari: {len(pending)} ta{note}")
     for p in pending[:10]:
         send(chat_id, _proposal_text(p), [[{"text": "✅ Tasdiqlash", "callback_data": f"ap:{p['id']}"},
@@ -150,10 +219,24 @@ def cmd_tannarx(chat_id, args):
         return send(chat_id, "Raqamlarni to'g'ri kiriting.")
     title = next((s["title"] for s in profit.skus() if s["sku_id"] == sku), None)
     if not title:
-        return send(chat_id, f"SKU {sku} topilmadi. SKU raqamlari veb-paneldagi «Tovarlar» sahifasida.")
+        return send(chat_id, f"SKU {sku} topilmadi. SKU raqamlari veb-paneldagi «Tovarlar» sahifasida (/panel).")
     db.set_cost(sku, cost, extra, title)
     profit.clear_cache()
     send(chat_id, f"✅ {esc(title)}: tannarx {profit.fmt(cost)} + {profit.fmt(extra)} so'm saqlandi.")
+
+
+def cmd_panel(chat_id):
+    tok = db.create_login_token(tenant.current_id())
+    url = f"{config.PUBLIC_URL}/kirish/{tok}"
+    send(chat_id, f"🖥 Veb-panelga kirish havolasi (15 daqiqa, bir martalik):\n{url}")
+
+
+def cmd_stat(chat_id):
+    sellers = db.list_sellers()
+    con = sum(1 for s in sellers if s.get("token_enc"))
+    demo = sum(1 for s in sellers if s.get("demo") and not s.get("token_enc"))
+    week = sum(1 for s in sellers if (s.get("last_seen") or 0) > time.time() - 7 * 86400)
+    send(chat_id, f"📊 Sotuvchilar: {len(sellers)}\n🔑 Ulangan: {con}\n🧪 Demo: {demo}\n🟢 7 kunda faol: {week}")
 
 
 CAPTION_KEYS = {
@@ -219,83 +302,131 @@ def handle_photo(chat_id, msg):
             send(chat_id, f"<b>{label}:</b>\n<code>{esc(val)[:3800]}</code>")
 
 
+# ---------- yo'naltirish ----------
 def handle_callback(cb):
     chat_id = cb["message"]["chat"]["id"]
     msg_id = cb["message"]["message_id"]
     data = cb.get("data", "")
     tg("answerCallbackQuery", callback_query_id=cb["id"])
-    if not is_owner(chat_id):
+    s = seller_for(chat_id)
+    if not s:
         return
-    if data.startswith("rep:"):
-        edit(chat_id, msg_id, profit.report_text(data[4:]), PERIOD_KB)
-    elif data.startswith("ap:"):
-        pid = int(data[3:])
-        p = db.get_proposal(pid)
-        if not p:
-            return
-        if client.demo:
-            ok, m = profit.approve_proposal(pid)
+    with tenant.use(s["id"]):
+        if data.startswith("shop:"):
+            shops = {str(x["id"]) for x in profit.client().shops()}
+            if data[5:] in shops:  # faqat o'z kaliti ko'rsatadigan do'kon
+                shop_chosen(chat_id, data[5:], msg_id)
+        elif data == "uzish:ha":
+            db.wipe_seller(s["id"])
+            tenant.forget(s["id"])
+            profit.clear_cache()
+            edit(chat_id, msg_id, "🗑 Kalit va barcha ma'lumotlaringiz o'chirildi. Qaytmoqchi bo'lsangiz: /start")
+        elif data == "uzish:yoq":
+            edit(chat_id, msg_id, "Bekor qilindi.")
+        elif not tenant.connected():
+            send(chat_id, CONNECT)
+        elif data.startswith("rep:"):
+            edit(chat_id, msg_id, profit.report_text(data[4:]), PERIOD_KB)
+        elif data.startswith("ap:"):
+            pid = int(data[3:])
+            p = db.get_proposal(pid)  # faqat shu sotuvchining taklifi
+            if not p:
+                return
+            if tenant.is_demo():
+                ok, m = profit.approve_proposal(pid)
+                edit(chat_id, msg_id, ("✅ " if ok else "❌ ") + esc(m))
+            else:  # haqiqiy do'kon — ikkinchi marta so'raymiz
+                edit(chat_id, msg_id, _proposal_text(p) + "\n\n⚠️ <b>Narx haqiqiy do'konda darhol o'zgaradi. Ishonchingiz komilmi?</b>",
+                     [[{"text": "✅ Ha, o'zgartir", "callback_data": f"apc:{pid}"},
+                       {"text": "❌ Yo'q", "callback_data": f"rj:{pid}"}]])
+        elif data.startswith("apc:"):
+            ok, m = profit.approve_proposal(int(data[4:]))
             edit(chat_id, msg_id, ("✅ " if ok else "❌ ") + esc(m))
-        else:  # haqiqiy do'kon — ikkinchi marta so'raymiz
-            edit(chat_id, msg_id, _proposal_text(p) + "\n\n⚠️ <b>Narx haqiqiy do'konda darhol o'zgaradi. Ishonchingiz komilmi?</b>",
-                 [[{"text": "✅ Ha, o'zgartir", "callback_data": f"apc:{pid}"},
-                   {"text": "❌ Yo'q", "callback_data": f"rj:{pid}"}]])
-    elif data.startswith("apc:"):
-        ok, m = profit.approve_proposal(int(data[4:]))
-        edit(chat_id, msg_id, ("✅ " if ok else "❌ ") + esc(m))
-    elif data.startswith("rj:"):
-        ok, m = profit.reject_proposal(int(data[3:]))
-        edit(chat_id, msg_id, "❌ Rad etildi" if ok else esc(m))
+        elif data.startswith("rj:"):
+            ok, m = profit.reject_proposal(int(data[3:]))
+            edit(chat_id, msg_id, "❌ Rad etildi" if ok else esc(m))
+
+
+NEEDS_SHOP = {"/qarorlar", "/hisobot", "/tovarlar", "/narx", "/tannarx"}
 
 
 def handle_message(msg):
     chat_id = msg["chat"]["id"]
+    if msg.get("chat", {}).get("type") != "private":
+        return  # guruhlarda ishlamaymiz — kalit va hisobotlar faqat shaxsiy chatda
     text = (msg.get("text") or "").strip()
-    if text.startswith("/start"):
-        return cmd_start(chat_id, msg.get("from", {}))
-    if not is_owner(chat_id):
-        return send(chat_id, "Bu bot shaxsiy. Kechirasiz.")
-    if msg.get("photo"):
-        return handle_photo(chat_id, msg)
     cmd, _, args = text.partition(" ")
     cmd = cmd.split("@")[0].lower()
-    if cmd == "/qarorlar":
-        send(chat_id, decisions_message())
-    elif cmd == "/hisobot":
-        send(chat_id, profit.report_text("today"), PERIOD_KB)
-    elif cmd == "/tovarlar":
-        cmd_tovarlar(chat_id)
-    elif cmd == "/narx":
-        cmd_narx(chat_id)
-    elif cmd == "/tannarx":
-        cmd_tannarx(chat_id, args)
-    else:
-        send(chat_id, HELP)
+    s = seller_for(chat_id, msg.get("from"), create=(cmd == "/start"))
+    if not s:
+        return send(chat_id, WELCOME)
+    with tenant.use(s["id"]):
+        if cmd == "/start":
+            return send(chat_id, HELP if tenant.connected() and not tenant.is_demo() else WELCOME)
+        if cmd == "/ulash":
+            db.set_setting("state", "token")
+            return send(chat_id, CONNECT)
+        if looks_like_token(text) and (db.get_setting("state") == "token" or not s.get("token_enc")):
+            return handle_token(chat_id, msg)
+        if cmd == "/demo":
+            if s.get("token_enc"):
+                return send(chat_id, "Sizda haqiqiy do'kon ulangan. Demo uchun avval /uzish qiling.")
+            db.update_seller(s["id"], demo=1)
+            tenant.forget(s["id"])
+            profit.clear_cache()
+            send(chat_id, "🧪 Namunaviy do'kon yoqildi.")
+            return send(chat_id, decisions_message())
+        if cmd == "/uzish":
+            return send(chat_id, "⚠️ Uzum kaliti, tannarxlar, takliflar va kartochkalar butunlay o'chiriladi. Davom etamizmi?",
+                        [[{"text": "🗑 Ha, o'chirish", "callback_data": "uzish:ha"},
+                          {"text": "Yo'q", "callback_data": "uzish:yoq"}]])
+        if cmd == "/statistika" and is_admin(chat_id):
+            return cmd_stat(chat_id)
+        if not tenant.connected():
+            return send(chat_id, CONNECT if cmd in NEEDS_SHOP or msg.get("photo") else WELCOME)
+        if cmd == "/panel":
+            return cmd_panel(chat_id)
+        if cmd == "/dokon":
+            return send(chat_id, "Qaysi do'kon bilan ishlaymiz?", shops_kb(profit.client().shops()))
+        if msg.get("photo"):
+            return handle_photo(chat_id, msg)
+        if cmd == "/qarorlar":
+            send(chat_id, decisions_message())
+        elif cmd == "/hisobot":
+            send(chat_id, profit.report_text("today"), PERIOD_KB)
+        elif cmd == "/tovarlar":
+            cmd_tovarlar(chat_id)
+        elif cmd == "/narx":
+            cmd_narx(chat_id)
+        elif cmd == "/tannarx":
+            cmd_tannarx(chat_id, args)
+        else:
+            send(chat_id, HELP)
 
 
-# ---------- kunlik hisobot ----------
+# ---------- kunlik xabarlar (har bir sotuvchiga) ----------
 def decisions_message():
     return checks.decisions_text(profit.shop().get("name", ""), limit=3, fmt=profit.fmt)
 
 
 def daily_check():
-    oid = owner_id()
-    if not oid:
-        return
     now = datetime.now(profit.TZ)
     today = now.strftime("%Y-%m-%d")
-    if now.hour >= config.MORNING_REPORT_HOUR and db.get_setting("last_morning") != today:
-        db.set_setting("last_morning", today)
-        try:
-            send(oid, decisions_message())
-        except Exception as e:
-            log.exception("Ertalabki qarorlar xatosi: %s", e)
-    if now.hour >= config.DAILY_REPORT_HOUR and db.get_setting("last_daily") != today:
-        db.set_setting("last_daily", today)
-        try:
-            send(oid, "🌙 <b>Kunlik hisobot</b>\n\n" + profit.report_text("today"), PERIOD_KB)
-        except Exception as e:
-            log.exception("Kunlik hisobot xatosi: %s", e)
+    for s in db.list_sellers():
+        if not s.get("tg_chat_id"):
+            continue
+        with tenant.use(s["id"]):
+            if not tenant.connected():
+                continue
+            try:
+                if now.hour >= config.MORNING_REPORT_HOUR and db.get_setting("last_morning") != today:
+                    db.set_setting("last_morning", today)
+                    send(s["tg_chat_id"], decisions_message())
+                if now.hour >= config.DAILY_REPORT_HOUR and db.get_setting("last_daily") != today:
+                    db.set_setting("last_daily", today)
+                    send(s["tg_chat_id"], "🌙 <b>Kunlik hisobot</b>\n\n" + profit.report_text("today"), PERIOD_KB)
+            except Exception as e:  # bitta sotuvchidagi xato boshqalarni to'xtatmasin
+                log.exception("Sotuvchi #%s kunlik xabar xatosi: %s", s["id"], e)
 
 
 def main():
@@ -312,13 +443,21 @@ def main():
         {"command": "tovarlar", "description": "Foydali va zararli tovarlar"},
         {"command": "narx", "description": "Narx takliflari"},
         {"command": "tannarx", "description": "Tannarx kiritish: SKU narx [qo'shimcha]"},
+        {"command": "panel", "description": "Veb-panelga kirish havolasi"},
+        {"command": "ulash", "description": "Uzum do'konini ulash"},
+        {"command": "demo", "description": "Namunaviy do'konda sinab ko'rish"},
+        {"command": "dokon", "description": "Do'konni almashtirish"},
+        {"command": "uzish", "description": "Kalit va ma'lumotni o'chirish"},
     ])
-    print(f"\n  Bot ishga tushdi: @{me['username']}  ({'DEMO rejim' if client.demo else 'haqiqiy do`kon'})")
-    print("  Telegram'da botga /start yozing. To'xtatish: Ctrl+C\n")
+    print(f"\n  Bot ishga tushdi: @{me['username']} (ko'p mijozli rejim, sotuvchilar: {len(db.list_sellers())})")
+    print("  To'xtatish: Ctrl+C\n")
     offset = None
+    last_daily = 0.0
     while True:
         try:
-            daily_check()
+            if time.time() - last_daily > 60:
+                daily_check()
+                last_daily = time.time()
             params = {"timeout": 50, "allowed_updates": ["message", "callback_query"]}
             if offset:
                 params["offset"] = offset
@@ -334,7 +473,7 @@ def main():
                     log.exception("Xabarni qayta ishlashda xato: %s", e)
                     chat = (u.get("message") or u.get("callback_query", {}).get("message") or {}).get("chat", {})
                     if chat.get("id"):
-                        send(chat["id"], f"❌ Xatolik: {esc(e)}")
+                        send(chat["id"], "❌ Xatolik yuz berdi. Birozdan keyin qayta urinib ko'ring.")
         except KeyboardInterrupt:
             print("To'xtatildi.")
             break

@@ -63,6 +63,8 @@ DEFAULT_LOGISTICS_FEE = _float("LOGISTICS_FEE", 6000)      # tarix bo'lmasa taxm
 WEB_HOST = os.environ.get("WEB_HOST", "127.0.0.1")
 WEB_PORT = int(_float("WEB_PORT", 5000))
 WEB_PASSWORD = os.environ.get("WEB_PASSWORD", "").strip()
+# Veb-panelning tashqi manzili — bot /panel buyrug'ida kirish havolasini shu manzil bilan yasaydi
+PUBLIC_URL = os.environ.get("PUBLIC_URL", f"http://127.0.0.1:{int(_float('WEB_PORT', 5000))}").rstrip("/")
 SECRET_KEY = os.environ.get("SECRET_KEY", "sotuvchi-ai-local-secret")
 
 DB_PATH = DATA_DIR / "sotuvchi.db"

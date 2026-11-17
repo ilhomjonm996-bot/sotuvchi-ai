@@ -35,7 +35,7 @@ def rule_for(title):
 def run():
     existing = db.get_costs()
     total = 0
-    for shop in profit._cached("shops", profit.client.shops):
+    for shop in profit._cached("shops", profit.client().shops):
         db.set_setting("shop_id", shop["id"])
         profit.clear_cache()
         try:

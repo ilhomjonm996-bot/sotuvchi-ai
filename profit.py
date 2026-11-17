@@ -21,7 +21,13 @@ from datetime import datetime, timedelta, timezone
 
 import config
 import db
-from uzum_client import client, UzumError
+import tenant
+from uzum_client import UzumError
+
+
+def client():
+    """Joriy sotuvchining Uzum klienti."""
+    return tenant.client()
 
 TZ = timezone(timedelta(hours=5))  # Toshkent vaqti (serverda ham to'g'ri ishlaydi)
 _DAY_MS = 24 * 3600 * 1000
@@ -43,13 +49,15 @@ EXPENSE_NAMES = {  # demo ma'lumot uchun; Uzum o'zi o'zbekcha nom beradi (Ombor,
 
 
 def default_period():
-    return "month" if client.demo else "year"
+    return "month" if tenant.is_demo() else "year"
 
 _cache = {}
 _CACHE_SEC = 300  # Uzum limitlari uchun natijani 5 daqiqa saqlaymiz
 
 
 def _cached(key, fn):
+    """Kesh har bir sotuvchi uchun alohida (kalitga sotuvchi raqami qo'shiladi)."""
+    key = (tenant.current_id(), key)
     now = time.time()
     hit = _cache.get(key)
     if hit and now - hit[0] < _CACHE_SEC:
@@ -59,8 +67,14 @@ def _cached(key, fn):
     return val
 
 
-def clear_cache():
-    _cache.clear()
+def clear_cache(all_sellers=False):
+    """Joriy sotuvchining keshini tozalaydi (all_sellers=True — hammasini)."""
+    if all_sellers:
+        _cache.clear()
+        return
+    sid = tenant.current_id()
+    for k in [k for k in _cache if k[0] == sid]:
+        _cache.pop(k, None)
 
 
 # ---------- yordamchi ----------
@@ -134,7 +148,7 @@ def target_margin():
 # ---------- do'kon va tovarlar ----------
 def shop():
     """Birinchi do'kon (yoki sozlamada tanlangan)."""
-    shops = _cached("shops", client.shops)
+    shops = _cached("shops", client().shops)
     if not shops:
         raise UzumError("Uzum'da do'kon topilmadi.")
     sid = db.get_setting("shop_id")
@@ -150,7 +164,7 @@ def shop_id():
 
 def products_raw():
     """Uzum'dan kelgan tovarlar (product darajasidagi signallar bilan: returnedPercentage, status ...)."""
-    return _cached(("prods", shop_id()), lambda: client.products(shop_id()))
+    return _cached(("prods", shop_id()), lambda: client().products(shop_id()))
 
 
 def skus():
@@ -226,12 +240,12 @@ def unit_cost(sku_id, purchase_price=0):
 # ---------- ma'lumot yuklash ----------
 def _orders(date_from, date_to):
     key = ("orders", shop_id(), date_from // 60000, date_to // 60000)
-    return _cached(key, lambda: client.finance_orders([shop_id()], date_from, date_to))
+    return _cached(key, lambda: client().finance_orders([shop_id()], date_from, date_to))
 
 
 def _expenses(date_from, date_to):
     key = ("exp", shop_id(), date_from // 60000, date_to // 60000)
-    return _cached(key, lambda: client.expenses([shop_id()], date_from, date_to))
+    return _cached(key, lambda: client().expenses([shop_id()], date_from, date_to))
 
 
 def _row_profit(o, idx, tax):
@@ -315,7 +329,7 @@ def report(period: str = "month"):
         "items": items,
         "expenses_by": sorted(exp_by.items(), key=lambda x: -x[1]),
         "missing_costs": [r["title"] for r in items if r["cost_source"] == "yo'q"],
-        "demo": client.demo,
+        "demo": tenant.is_demo(),
         "shop_name": shop().get("name", ""),
     }
 
@@ -471,7 +485,7 @@ def approve_proposal(pid):
     if int(p["shop_id"]) != shop_id():
         return False, "Bu taklif boshqa do'kon uchun — joriy do'konda tasdiqlab bo'lmaydi"
     try:
-        client.send_price(p["shop_id"], p["product_id"], p["sku_id"], p["new_price"], p["full_price"])
+        client().send_price(p["shop_id"], p["product_id"], p["sku_id"], p["new_price"], p["full_price"])
     except UzumError as e:
         db.set_proposal_status(pid, "failed", str(e))
         return False, f"Uzum xatosi: {e}"

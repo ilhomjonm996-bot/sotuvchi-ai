@@ -23,7 +23,7 @@ class UzumError(Exception):
 
 class UzumClient:
     def __init__(self, token: str = None, base: str = None, demo: bool = None):
-        self.token = (token if token is not None else config.UZUM_API_TOKEN).replace("Bearer ", "").strip()
+        self.token = (token or "").replace("Bearer ", "").strip()
         self.base = (base or config.UZUM_API_BASE).rstrip("/")
         self.demo = config.DEMO_MODE if demo is None else demo
         self._last_call = 0.0
@@ -52,7 +52,7 @@ class UzumClient:
                 time.sleep(2 ** attempt)
                 continue
             if r.status_code in (401, 403):
-                raise UzumError("Uzum tokeni noto'g'ri yoki bekor qilingan (401/403). .env faylini tekshiring.")
+                raise UzumError("Uzum kaliti noto'g'ri yoki bekor qilingan (401/403).")
             if r.status_code >= 400:
                 raise UzumError(f"Uzum xatosi {r.status_code}: {r.text[:300]}")
             data = r.json() if r.content else {}
@@ -116,5 +116,4 @@ class UzumClient:
                 "skuList": [{"skuId": sku_id, "fullPrice": int(full_price), "sellPrice": int(sell_price)}]}
         return self._request("POST", f"/v1/product/{shop_id}/sendPriceData", json=body)
 
-
-client = UzumClient()
+# Eslatma: umumiy (global) klient yo'q — har bir sotuvchining klienti tenant.client() orqali olinadi.

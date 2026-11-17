@@ -30,6 +30,20 @@ python bot.py             # Telegram bot
 ```
 Windows uchun: `start_web.bat`, `start_bot.bat`. Batafsil: [README_UZ.md](README_UZ.md).
 
+## Ko'p mijozli rejim
+Bitta bot va bitta veb-panel ko'p sotuvchiga xizmat qiladi, har birining ma'lumoti alohida:
+1. Sotuvchi botga `/start` yozadi → `/ulash` → Uzum API kalitini yuboradi (xabar darhol o'chiriladi, kalit shifrlanib saqlanadi) → do'konini tanlaydi.
+2. `/panel` — veb-panelga 15 daqiqalik bir martalik kirish havolasi.
+3. `/demo` — namunaviy do'kon bilan sinab ko'rish, `/uzish` — hamma ma'lumotini o'chirish.
+
+Har bir so'rov joriy sotuvchi bilan bog'lanadi (`tenant.py`), bazadagi har bir jadval `seller_id` bo'yicha ajratilgan (`db.py`), Uzum kalitlari Fernet bilan shifrlangan (`secure.py`).
+
+Ajratish testlari:
+```bash
+python -m unittest discover -s tests -v
+```
+
 ## Xavfsizlik
-- Kalitlar faqat `.env` da, repoga kirmaydi.
+- Server kalitlari faqat `.env` da, repoga kirmaydi; sotuvchilarning Uzum kalitlari bazada shifrlangan.
+- Bir sotuvchi boshqasining tannarxi, takliflari, kartochkalari va fayllarini ko'ra olmaydi (testlar bilan tekshirilgan).
 - Narx hech qachon egasining tasdig'isiz o'zgarmaydi; haqiqiy do'konda ikki marta so'raladi.

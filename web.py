@@ -5,7 +5,10 @@ import functools
 import logging
 from pathlib import Path
 
-from flask import Flask, abort, flash, redirect, render_template, request, send_from_directory, session, url_for
+import hmac
+import secrets
+
+from flask import Flask, abort, flash, g, redirect, render_template, request, send_from_directory, session, url_for
 from jinja2 import DictLoader
 
 import ai_card
@@ -13,12 +16,24 @@ import checks
 import config
 import db
 import profit
-from uzum_client import UzumError, client
+import tenant
+from uzum_client import UzumError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 app = Flask(__name__)
-app.secret_key = config.SECRET_KEY
+def _secret_key():
+    """Sessiya imzosi uchun kalit: .env dagi SECRET_KEY yoki data/flask.key (birinchi ishga tushishda yaratiladi)."""
+    if config.SECRET_KEY and config.SECRET_KEY != "sotuvchi-ai-local-secret":
+        return config.SECRET_KEY
+    f = config.DATA_DIR / "flask.key"
+    if not f.exists():
+        f.write_text(secrets.token_hex(32))
+    return f.read_text().strip()
+
+
+app.secret_key = _secret_key()
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
 app.config["MAX_CONTENT_LENGTH"] = 15 * 1024 * 1024
 
 # ======================================================================
@@ -71,7 +86,7 @@ input.sm{width:110px;padding:6px 8px}label{font-size:13px;color:var(--muted);dis
 </style></head><body>
 <header><a class="logo" href="/">Sotuvchi <span>AI</span></a>
 <nav>{% for href, name in [("/","Bosh sahifa"),("/qarorlar","Qarorlar"),("/products","Tovarlar"),("/prices","Narxlar"),("/card","AI kartochka"),("/settings","Sozlamalar")] %}
-<a href="{{href}}" class="{{'on' if active==href}}">{{name}}</a>{% endfor %}</nav></header>
+<a href="{{href}}" class="{{'on' if active==href}}">{{name}}</a>{% endfor %}{% if session.get('seller_id') %}<a href="/chiqish">Chiqish</a>{% endif %}</nav></header>
 <main>
 {% if demo %}<div class="banner">🧪 <b>Demo rejim:</b> namunaviy do'kon ma'lumotlari ko'rsatilmoqda. Haqiqiy do'kon Uzum Seller API kaliti orqali ulanadi.</div>{% endif %}
 {% if est_costs and not demo and active in ('/', '/products', '/prices') %}<div class="banner" style="background:#eef3ff;color:#2a3f8f">ℹ️ Tannarxlar <b>taxminiy</b> (tovar turiga qarab sotuv narxining 25–45%). Aniq raqamni <a href="/products">Tovarlar</a> sahifasida yozsangiz, hisob avtomatik yangilanadi.</div>{% endif %}
@@ -204,7 +219,7 @@ SETTINGS = r"""{% extends "base.html" %}{% block title %}Sozlamalar{% endblock %
 <tr><td>Uzum do'koni</td><td>{% if demo %}<span class="pill p-low">Demo</span>{% else %}<span class="pill p-ok">Ulangan</span> {{shop.name}}{% endif %}</td></tr>
 <tr><td>AI (Claude)</td><td>{% if ai %}<span class="pill p-ok">Ulangan</span> <span class="small muted">{{model}}</span>{% else %}<span class="pill p-nocost">Kalit yo'q</span>{% endif %}</td></tr>
 <tr><td>Telegram bot</td><td>{% if tg %}<span class="pill p-ok">Token bor</span>{% else %}<span class="pill p-nocost">Token yo'q</span>{% endif %}</td></tr>
-</table><p class="small muted">Kalitlar faqat loyiha papkasidagi <code>.env</code> faylida saqlanadi. O'zgartirgandan keyin dasturni qayta ishga tushiring.</p></div></div>
+</table><p class="small muted">Uzum kalitingiz shifrlangan holda saqlanadi va faqat sizning do'koningiz uchun ishlatiladi. Kalitni almashtirish — botda /ulash, butunlay o'chirish — /uzish.</p></div></div>
 {% endblock %}"""
 
 QARORLAR = r"""{% extends "base.html" %}{% block title %}Qarorlar{% endblock %}{% block body %}
@@ -215,6 +230,13 @@ QARORLAR = r"""{% extends "base.html" %}{% block title %}Qarorlar{% endblock %}{
 {% else %}<div class="card"><p>✅ Hozircha muhim muammo topilmadi.</p></div>{% endfor %}
 {% endblock %}"""
 
+KIRISH = r"""{% extends "base.html" %}{% block title %}Kirish{% endblock %}{% block body %}<div class="card" style="max-width:520px;margin:50px auto">
+<h1>Panelga kirish</h1>
+{% if expired %}<p class="neg">Bu havola eskirgan yoki allaqachon ishlatilgan.</p>{% endif %}
+<p>Har bir sotuvchi faqat o'z paneliga kiradi. Kirish uchun:</p>
+<ol><li>Telegram'da Sotuvchi AI botini oching</li><li><code>/panel</code> deb yozing</li><li>Bot yuborgan havolani bosing (15 daqiqa amal qiladi, bir martalik)</li></ol>
+<p class="small muted">Do'kon hali ulanmagan bo'lsa, botda /ulash yoki /demo.</p></div>{% endblock %}"""
+
 LOGIN = r"""{% extends "base.html" %}{% block body %}<form class="card" method="post" style="max-width:360px;margin:60px auto">
 <h1>Kirish</h1><p class="sub">Panel paroli</p><input type="password" name="password" autofocus><p><button class="btn">Kirish</button></p></form>{% endblock %}"""
 
@@ -223,37 +245,87 @@ ERROR = r"""{% extends "base.html" %}{% block body %}<div class="card"><h1>Xatol
 app.jinja_loader = DictLoader({
     "base.html": BASE, "dashboard.html": DASHBOARD, "products.html": PRODUCTS, "prices.html": PRICES,
     "card_form.html": CARD_FORM, "card_view.html": CARD_VIEW, "settings.html": SETTINGS,
-    "login.html": LOGIN, "error.html": ERROR, "qarorlar.html": QARORLAR,
+    "login.html": LOGIN, "error.html": ERROR, "qarorlar.html": QARORLAR, "kirish.html": KIRISH,
 })
 app.jinja_env.filters["basename"] = lambda p: Path(p or "").name
 
 
 @app.context_processor
 def _ctx():
-    return {"f": profit.fmt, "demo": client.demo, "active": "/" + request.path.strip("/").split("/")[0],
-            "est_costs": db.get_setting("costs_estimated") == "1"}
+    if g.get("tenant_token") is None:
+        return {"f": profit.fmt, "demo": False, "active": "", "est_costs": False, "seller": None}
+    return {"f": profit.fmt, "demo": tenant.is_demo(), "active": "/" + request.path.strip("/").split("/")[0],
+            "est_costs": db.get_setting("costs_estimated") == "1", "seller": tenant.seller()}
 
 
 # ======================================================================
-# Kirish (ixtiyoriy parol)
+# Kirish: har bir sotuvchi faqat o'z paneliga
+#   - botdagi /panel → bir martalik havola /kirish/<token> → sessiya
+#   - ochiq demo sayt (DEMO_MODE) va lokal kompyuter (parolsiz) → ega (#1)
+#   - WEB_PASSWORD → eski parol bilan ega (#1)
 # ======================================================================
+_PUBLIC = {"login", "kirish", "kirish_info", "static"}
+
+
+def _local():
+    return request.remote_addr in ("127.0.0.1", "::1")
+
+
 @app.before_request
 def _auth():
-    if not config.WEB_PASSWORD or request.endpoint in ("login", "static"):
+    g.tenant_token = None
+    if request.endpoint in _PUBLIC:
         return None
-    if not session.get("ok"):
+    sid = session.get("seller_id")
+    if sid and db.get_seller(sid):
+        g.tenant_token = tenant.set_current(sid)
+        return None
+    if config.DEMO_MODE or (_local() and not config.WEB_PASSWORD):
+        g.tenant_token = tenant.set_current(tenant.OWNER_ID)
+        return None
+    if config.WEB_PASSWORD:
         return redirect(url_for("login"))
-    return None
+    return redirect(url_for("kirish_info"))
+
+
+@app.teardown_request
+def _reset_tenant(exc=None):
+    tok = g.pop("tenant_token", None)
+    if tok is not None:
+        tenant.reset(tok)
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        if request.form.get("password") == config.WEB_PASSWORD:
-            session["ok"] = True
+        if config.WEB_PASSWORD and hmac.compare_digest(request.form.get("password", ""), config.WEB_PASSWORD):
+            session.clear()
+            session["seller_id"] = tenant.OWNER_ID
             return redirect("/")
         flash("Parol noto'g'ri", "error")
     return render_template("login.html")
+
+
+@app.route("/kirish")
+def kirish_info():
+    return render_template("kirish.html", ok=False)
+
+
+@app.route("/kirish/<tok>")
+def kirish(tok):
+    sid = db.use_login_token(tok)
+    if not sid:
+        return render_template("kirish.html", ok=False, expired=True), 403
+    session.clear()
+    session["seller_id"] = sid
+    session.permanent = True
+    return redirect("/")
+
+
+@app.route("/chiqish")
+def chiqish():
+    session.clear()
+    return redirect(url_for("kirish_info"))
 
 
 @app.errorhandler(UzumError)
@@ -350,6 +422,8 @@ def card_view(cid):
 
 @app.route("/files/<name>")
 def files(name):
+    if db.card_file_owner(name) != tenant.current_id():  # faqat o'z kartochkasining rasmi
+        abort(404)
     for d in (config.OUTPUT_DIR, config.UPLOAD_DIR):
         if (d / name).is_file():
             return send_from_directory(d, name)
@@ -362,14 +436,15 @@ def settings():
         try:
             db.set_setting("tax_rate", float(request.form["tax"]) / 100)
             db.set_setting("target_margin", float(request.form["margin"]) / 100)
-            if request.form.get("shop_id"):
+            allowed = {str(s["id"]) for s in profit.client().shops()}
+            if request.form.get("shop_id") in allowed:  # faqat o'z kaliti ko'rsatadigan do'kon
                 db.set_setting("shop_id", request.form["shop_id"])
             profit.clear_cache()
             flash("Saqlandi")
         except (ValueError, KeyError):
             flash("Qiymat noto'g'ri", "error")
         return redirect("/settings")
-    shops = profit._cached("shops", client.shops)
+    shops = profit._cached("shops", profit.client().shops)
     return render_template("settings.html", tax=profit.tax_rate(), margin=profit.target_margin(),
                            shops=shops, shop=profit.shop(), ai=bool(config.ANTHROPIC_API_KEY),
                            model=config.AI_MODEL, tg=bool(config.TELEGRAM_BOT_TOKEN))
@@ -377,5 +452,5 @@ def settings():
 
 if __name__ == "__main__":
     print(f"\n  Sotuvchi AI paneli: http://{config.WEB_HOST}:{config.WEB_PORT}"
-          f"  ({'DEMO rejim' if client.demo else 'haqiqiy do`kon'})\n")
+          f"  (ko'p mijozli; sotuvchilar: {len(db.list_sellers())}{', DEMO' if config.DEMO_MODE else ''})\n")
     app.run(host=config.WEB_HOST, port=config.WEB_PORT, debug=False)
