@@ -103,12 +103,30 @@ class MultiTenantTest(unittest.TestCase):
         C = db.create_seller(chat_id="1003", name="C", demo=1)
         with tenant.use(C):
             db.set_cost(1, 1, 0, "C")
+            ccid = db.add_competitor(1, "C raqobatchisi")
+            db.add_snapshot(ccid, "2026-01-01", price=1)
         with tenant.use(self.B):
             db.set_cost(2, 2, 0, "B2")
         db.wipe_seller(C)
         self.assertIsNone(db.get_seller(C))
+        with db.conn() as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM comp_snapshots WHERE competitor_id=?", (ccid,)).fetchone()[0], 0)
         with tenant.use(self.B):
             self.assertIn(2, db.get_costs())
+
+    def test_competitors_isolated(self):
+        with tenant.use(self.A):
+            cid = db.add_competitor(2203614, "A raqobatchisi", manual=1)
+            self.assertTrue(db.add_snapshot(cid, "2026-01-01", price=50000))
+        with tenant.use(self.B):
+            self.assertEqual(db.list_competitors(), [])
+            self.assertIsNone(db.get_competitor(cid))
+            self.assertEqual(db.snapshots(cid), [])
+            self.assertFalse(db.add_snapshot(cid, "2026-01-02", price=1))  # begona raqobatchiga yozolmaydi
+            self.assertFalse(db.delete_competitor(cid))
+            self.assertFalse(db.link_competitor(cid, 1))
+        with tenant.use(self.A):
+            self.assertEqual([s["price"] for s in db.snapshots(cid)], [50000])
 
     def test_web_isolation(self):
         import web

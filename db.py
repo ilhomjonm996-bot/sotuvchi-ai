@@ -57,6 +57,21 @@ CREATE TABLE IF NOT EXISTS cards (
 CREATE TABLE IF NOT EXISTS login_tokens (
     token TEXT PRIMARY KEY, seller_id INTEGER, expires INTEGER, used INTEGER DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS competitors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    seller_id INTEGER NOT NULL,
+    product_id INTEGER,            -- raqobatchi tovarining Uzum'dagi raqami (havoladan)
+    title TEXT, shop TEXT, url TEXT,
+    my_sku_id INTEGER,             -- qaysi o'z tovarimiz bilan solishtiriladi
+    manual INTEGER DEFAULT 0,      -- 1 = narxni sotuvchi qo'lda kiritadi
+    created INTEGER
+);
+CREATE TABLE IF NOT EXISTS comp_snapshots (
+    competitor_id INTEGER NOT NULL,
+    day TEXT NOT NULL,             -- YYYY-MM-DD, kuniga bitta yozuv
+    price REAL, full_price REAL, rating REAL, reviews INTEGER, orders INTEGER, stock INTEGER,
+    PRIMARY KEY (competitor_id, day)
+);
 """
 
 _GLOBAL_KEYS = {"schema_version"}
@@ -151,7 +166,8 @@ def wipe_seller(seller_id):
     """Sotuvchi ma'lumotini butunlay o'chiradi (/uzish). Ega (#1) qatori qoladi, faqat kaliti tozalanadi."""
     sid = int(seller_id)
     with conn() as c:
-        for table in ("seller_costs", "price_proposals", "cards", "login_tokens"):
+        c.execute("DELETE FROM comp_snapshots WHERE competitor_id IN (SELECT id FROM competitors WHERE seller_id=?)", (sid,))
+        for table in ("seller_costs", "price_proposals", "cards", "login_tokens", "competitors"):
             c.execute(f"DELETE FROM {table} WHERE seller_id=?", (sid,))
         c.execute("DELETE FROM settings WHERE key LIKE ?", (f"s{sid}:%",))
         if sid == 1:
@@ -291,6 +307,63 @@ def card_file_owner(filename):
         r = c.execute("SELECT seller_id FROM cards WHERE infographic_path LIKE ? OR photo_path LIKE ?",
                       (like, like)).fetchone()
     return r["seller_id"] if r else None
+
+
+# ---------- raqobatchilar ----------
+def add_competitor(product_id, title, shop="", url="", my_sku_id=None, manual=0):
+    with conn() as c:
+        cur = c.execute("""INSERT INTO competitors(seller_id, product_id, title, shop, url, my_sku_id, manual, created)
+                           VALUES(?,?,?,?,?,?,?,?)""",
+                        (_sid(), product_id, title, shop, url, my_sku_id, int(manual), int(time.time())))
+        return cur.lastrowid
+
+
+def list_competitors():
+    with conn() as c:
+        return [dict(r) for r in c.execute("SELECT * FROM competitors WHERE seller_id=? ORDER BY id", (_sid(),))]
+
+
+def get_competitor(cid):
+    with conn() as c:
+        r = c.execute("SELECT * FROM competitors WHERE id=? AND seller_id=?", (int(cid), _sid())).fetchone()
+    return dict(r) if r else None
+
+
+def link_competitor(cid, my_sku_id):
+    with conn() as c:
+        cur = c.execute("UPDATE competitors SET my_sku_id=? WHERE id=? AND seller_id=?",
+                        (my_sku_id, int(cid), _sid()))
+        return cur.rowcount > 0
+
+
+def delete_competitor(cid):
+    if not get_competitor(cid):
+        return False
+    with conn() as c:
+        c.execute("DELETE FROM comp_snapshots WHERE competitor_id=?", (int(cid),))
+        c.execute("DELETE FROM competitors WHERE id=? AND seller_id=?", (int(cid), _sid()))
+    return True
+
+
+def add_snapshot(cid, day, **v):
+    """Kunlik holat (narx, qoldiq, buyurtmalar...). Faqat o'z raqobatchisiga yoziladi."""
+    if not get_competitor(cid):
+        return False
+    cols = ("price", "full_price", "rating", "reviews", "orders", "stock")
+    with conn() as c:
+        c.execute(f"INSERT OR REPLACE INTO comp_snapshots(competitor_id, day, {', '.join(cols)}) VALUES(?,?,?,?,?,?,?,?)",
+                  (int(cid), day, *[v.get(k) for k in cols]))
+    return True
+
+
+def snapshots(cid, limit=60):
+    """Eng yangisi oxirida. Begona raqobatchi uchun bo'sh ro'yxat."""
+    if not get_competitor(cid):
+        return []
+    with conn() as c:
+        rows = c.execute("SELECT * FROM comp_snapshots WHERE competitor_id=? ORDER BY day DESC LIMIT ?",
+                         (int(cid), limit)).fetchall()
+    return [dict(r) for r in reversed(rows)]
 
 
 init()

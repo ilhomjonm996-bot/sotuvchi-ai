@@ -26,6 +26,7 @@ import ai_card
 import checks
 import config
 import db
+import market
 import profit
 import secure
 import tenant
@@ -64,6 +65,8 @@ HELP = (
     "/narx — narx takliflari, tasdiqlash\n"
     "/tannarx SKU narx [qo'shimcha] — tannarx kiritish\n"
     "   masalan: <code>/tannarx 9001 72000 3000</code>\n"
+    "/raqobat — raqobatchilar (qo'shish: <code>/raqobat havola</code>)\n"
+    "/bozor so'z — bozor tahlili, masalan <code>/bozor termos</code>\n"
     "/panel — veb-panelga kirish havolasi\n"
     "/dokon — do'konni almashtirish · /uzish — uzish\n\n"
     "📸 <b>Kartochka:</b> tovar rasmini yuboring, izohiga yozing:\n"
@@ -125,7 +128,7 @@ def is_admin(chat_id):
 # ---------- ulash ----------
 def looks_like_token(text):
     t = (text or "").strip()
-    return len(t) >= 24 and " " not in t and not t.startswith("/")
+    return len(t) >= 24 and " " not in t and not t.startswith("/") and "://" not in t and "uzum.uz" not in t
 
 
 def handle_token(chat_id, msg):
@@ -223,6 +226,56 @@ def cmd_tannarx(chat_id, args):
     db.set_cost(sku, cost, extra, title)
     profit.clear_cache()
     send(chat_id, f"✅ {esc(title)}: tannarx {profit.fmt(cost)} + {profit.fmt(extra)} so'm saqlandi.")
+
+
+def cmd_raqobat(chat_id, args):
+    link = args.strip()
+    if link:
+        try:
+            cid = market.add(link)
+        except market.MarketUnavailable as e:
+            return send(chat_id, f"ℹ️ {esc(e)}\nRaqobatchini veb-panelda qo'shing (/panel → Raqobat): u yerda nom va narxni kiritasiz.")
+        except ValueError as e:
+            if not market.live() and "nomi va narxini" in str(e):
+                return send(chat_id, f"ℹ️ {esc(market.LIVE_MSG)}\nRaqobatchini veb-panelda qo'shing: /panel → Raqobat.")
+            return send(chat_id, f"⚠️ {esc(e)}")
+        c = db.get_competitor(cid)
+        send(chat_id, f"✅ Kuzatuvga qo'shildi: <b>{esc(c['title'])}</b>\n"
+                      "O'z tovaringiz bilan bog'lash — veb-paneldagi «Raqobat» sahifasida (/panel).")
+    rows = market.overview()
+    if not rows:
+        return send(chat_id, "Hali raqobatchi yo'q. Qo'shish: <code>/raqobat https://uzum.uz/uz/product/...</code>")
+    lines = ["🥊 <b>Raqobatchilar</b>"]
+    for c in rows[:15]:
+        l = c["last"] or {}
+        diff = f" ({c['diff'] * 100:+.0f}% sizdan)" if c["diff"] is not None else ""
+        stock = " · <b>tugagan</b>" if l.get("stock") == 0 else ""
+        change = f" · 7 kunda {c['price_change'] * 100:+.0f}%" if c["price_change"] else ""
+        price = f"{profit.fmt(l['price'])} so'm" if l.get("price") else "narx yo'q"
+        lines.append(f"• {esc(c.get('shop') or '')} {esc(c['title'][:45])} — {price}{diff}{change}{stock}")
+    lines.append("\nMuhim o'zgarishlar /qarorlar da ham chiqadi.")
+    send(chat_id, "\n".join(lines))
+
+
+def cmd_bozor(chat_id, query):
+    if not query.strip():
+        return send(chat_id, "Format: <code>/bozor so'z</code>\nMasalan: <code>/bozor termos</code>")
+    try:
+        a = market.analyze(query.strip()[:80])
+    except market.MarketUnavailable as e:
+        return send(chat_id, f"ℹ️ {esc(e)}")
+    if not a:
+        return send(chat_id, "Bu so'z bo'yicha tovar topilmadi.")
+    lines = [f"📊 <b>Bozor: {esc(a['query'])}</b>" + (" (demo)" if a["source"] == "demo" else ""),
+             f"Nisha bahosi: <b>{a['score']}/10</b> · talab {a['demand']}, raqobat {a['competition']}",
+             f"Tovarlar: {a['count']} ta, sotuvchilar: {a['shops']}",
+             f"Narx: mediana <b>{profit.fmt(a['price_median'])}</b>, ko'pchilik {profit.fmt(a['p25'])}–{profit.fmt(a['p75'])} so'm",
+             f"Top-3 ulushi: {a['top3_share'] * 100:.0f}% · o'rtacha reyting {a['avg_rating']:.1f}", "",
+             f"💡 {esc(a['advice'])}"]
+    if a["mine"]:
+        lines.append(f"\nSizning narxingiz {profit.fmt(a['mine']['price'])} — medianadan {a['mine']['vs'] * 100:+.0f}%.")
+    lines.append("\nBatafsil: /panel → Bozor")
+    send(chat_id, "\n".join(lines))
 
 
 def cmd_panel(chat_id):
@@ -347,7 +400,7 @@ def handle_callback(cb):
             edit(chat_id, msg_id, "❌ Rad etildi" if ok else esc(m))
 
 
-NEEDS_SHOP = {"/qarorlar", "/hisobot", "/tovarlar", "/narx", "/tannarx"}
+NEEDS_SHOP = {"/qarorlar", "/hisobot", "/tovarlar", "/narx", "/tannarx", "/raqobat", "/bozor"}
 
 
 def handle_message(msg):
@@ -400,6 +453,12 @@ def handle_message(msg):
             cmd_narx(chat_id)
         elif cmd == "/tannarx":
             cmd_tannarx(chat_id, args)
+        elif cmd == "/raqobat":
+            cmd_raqobat(chat_id, args)
+        elif cmd == "/bozor":
+            cmd_bozor(chat_id, args)
+        elif market.parse_product_id(text) and "uzum.uz" in text:
+            cmd_raqobat(chat_id, text)  # Uzum havolasi yuborilsa — raqobatchi sifatida qo'shamiz
         else:
             send(chat_id, HELP)
 
@@ -421,6 +480,7 @@ def daily_check():
             try:
                 if now.hour >= config.MORNING_REPORT_HOUR and db.get_setting("last_morning") != today:
                     db.set_setting("last_morning", today)
+                    market.refresh_all()  # raqobatchilarning bugungi holati (avtomatik manba bo'lsa)
                     send(s["tg_chat_id"], decisions_message())
                 if now.hour >= config.DAILY_REPORT_HOUR and db.get_setting("last_daily") != today:
                     db.set_setting("last_daily", today)
@@ -443,6 +503,8 @@ def main():
         {"command": "tovarlar", "description": "Foydali va zararli tovarlar"},
         {"command": "narx", "description": "Narx takliflari"},
         {"command": "tannarx", "description": "Tannarx kiritish: SKU narx [qo'shimcha]"},
+        {"command": "raqobat", "description": "Raqobatchilar: narx, qoldiq, sotuv"},
+        {"command": "bozor", "description": "Bozor tahlili: /bozor so'z"},
         {"command": "panel", "description": "Veb-panelga kirish havolasi"},
         {"command": "ulash", "description": "Uzum do'konini ulash"},
         {"command": "demo", "description": "Namunaviy do'konda sinab ko'rish"},

@@ -15,17 +15,18 @@ Yangi tekshiruvchi qo'shish: checks/ ichida run() funksiyali fayl yozing va CHEC
 import logging
 from html import escape as _esc
 
-from . import aksiya, kartochka, kompensatsiya, mavsum, narx_tajriba, qaytish, reklama, reyting, saqlash, tugagan
+from . import aksiya, kartochka, kompensatsiya, mavsum, narx_tajriba, qaytish, raqobat, reklama, reyting, saqlash, tugagan
 
 log = logging.getLogger("checks")
 
 CHECKS = [saqlash.run, aksiya.run, reklama.run, kompensatsiya.run, qaytish.run, reyting.run,
-          tugagan.run, mavsum.run, narx_tajriba.run, kartochka.run]
+          tugagan.run, mavsum.run, narx_tajriba.run, kartochka.run, raqobat.run]
 AGENT_NAMES = {
     "saqlash": "Ombor nazoratchisi", "aksiya": "Aksiya filtri", "qaytish": "Qaytish tahlilchisi",
     "reyting": "Reyting nazoratchisi", "tugagan": "Qoldiq nazoratchisi", "kartochka": "Kartochka auditori",
     "reklama": "Marketolog (reklama)", "kompensatsiya": "Kompensatsiya radari",
     "mavsum": "Strateg (mavsumiy zaxira)", "narx_tajriba": "Narx tajribasi",
+    "raqobat": "Raqobatchi kuzatuvchisi",
 }
 LEVEL_ORDER = {"red": 0, "orange": 1, "green": 2}
 ICONS = {"red": "🔴", "orange": "🟠", "green": "🟢"}

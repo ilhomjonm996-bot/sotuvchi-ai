@@ -62,6 +62,8 @@ Siz (birinchi foydalanuvchi) — ega. Boshqa sotuvchilar shu botning o'zidan foy
 | `/ulash` | Uzum API kalitini yuborish (xabar o'chiriladi, kalit shifrlanadi) |
 | `/demo` | namunaviy do'kon bilan sinab ko'rish |
 | `/panel` | veb-panelga bir martalik kirish havolasi (15 daqiqa) |
+| `/raqobat` | raqobatchilar; `/raqobat havola` — qo'shish (yoki Uzum havolasini shunchaki yuboring) |
+| `/bozor so'z` | bozor tahlili, masalan `/bozor termos` |
 | `/dokon` | do'konni almashtirish |
 | `/uzish` | o'z ma'lumotlarini butunlay o'chirish |
 | `/statistika` | (faqat ega) nechta sotuvchi ulangan |
@@ -78,6 +80,7 @@ Har bir sotuvchi faqat o'z ma'lumotini ko'radi. Tekshirish: `py -m unittest disc
 | `db.py` | mahalliy baza (`data/sotuvchi.db`), har bir sotuvchi alohida |
 | `tenant.py` | joriy sotuvchi va uning Uzum klienti |
 | `secure.py` | kalitlarni shifrlash |
+| `market.py` | raqobatchilar kuzatuvi va bozor tahlili |
 | `profit.py` | foyda hisobi va narx maslahati |
 | `ai_card.py`, `infographic.py` | AI kartochka va infografika |
 | `web.py` | veb-panel |

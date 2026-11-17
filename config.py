@@ -67,4 +67,4 @@ WEB_PASSWORD = os.environ.get("WEB_PASSWORD", "").strip()
 PUBLIC_URL = os.environ.get("PUBLIC_URL", f"http://127.0.0.1:{int(_float('WEB_PORT', 5000))}").rstrip("/")
 SECRET_KEY = os.environ.get("SECRET_KEY", "sotuvchi-ai-local-secret")
 
-DB_PATH = DATA_DIR / "sotuvchi.db"
+DB_PATH = Path(os.environ["DB_PATH"]) if os.environ.get("DB_PATH") else DATA_DIR / "sotuvchi.db"

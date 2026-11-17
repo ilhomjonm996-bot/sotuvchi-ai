@@ -15,6 +15,7 @@ import ai_card
 import checks
 import config
 import db
+import market
 import profit
 import tenant
 from uzum_client import UzumError
@@ -85,7 +86,7 @@ input.sm{width:110px;padding:6px 8px}label{font-size:13px;color:var(--muted);dis
 .legend{display:flex;gap:16px;font-size:13px;color:var(--muted);margin-top:6px}.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px}
 </style></head><body>
 <header><a class="logo" href="/">Sotuvchi <span>AI</span></a>
-<nav>{% for href, name in [("/","Bosh sahifa"),("/qarorlar","Qarorlar"),("/products","Tovarlar"),("/prices","Narxlar"),("/card","AI kartochka"),("/settings","Sozlamalar")] %}
+<nav>{% for href, name in [("/","Bosh sahifa"),("/qarorlar","Qarorlar"),("/products","Tovarlar"),("/prices","Narxlar"),("/raqobat","Raqobat"),("/bozor","Bozor"),("/card","AI kartochka"),("/settings","Sozlamalar")] %}
 <a href="{{href}}" class="{{'on' if active==href}}">{{name}}</a>{% endfor %}{% if session.get('seller_id') %}<a href="/chiqish">Chiqish</a>{% endif %}</nav></header>
 <main>
 {% if demo %}<div class="banner">🧪 <b>Demo rejim:</b> namunaviy do'kon ma'lumotlari ko'rsatilmoqda. Haqiqiy do'kon Uzum Seller API kaliti orqali ulanadi.</div>{% endif %}
@@ -230,6 +231,55 @@ QARORLAR = r"""{% extends "base.html" %}{% block title %}Qarorlar{% endblock %}{
 {% else %}<div class="card"><p>✅ Hozircha muhim muammo topilmadi.</p></div>{% endfor %}
 {% endblock %}"""
 
+RAQOBAT = r"""{% extends "base.html" %}{% block title %}Raqobat{% endblock %}{% block body %}
+<h1>Raqobatchilar</h1><p class="sub">Raqobatchi tovarlarini kuzating: narxi, qoldig'i va sotuvi o'z tovaringiz bilan solishtiriladi. Muhim o'zgarishlar «Qarorlar»ga tushadi.</p>
+{% if not live %}<div class="banner" style="background:#eef3ff;color:#2a3f8f">ℹ️ {{ live_msg }}</div>{% endif %}
+<div class="card tw" style="margin-bottom:14px"><table><tr><th>Raqobatchi</th><th>Mening tovarim</th><th class="n">Uning narxi</th><th class="n">Mening narxim</th><th class="n">Farq</th><th class="n">7 kunda narx</th><th class="n">Qoldiq</th><th class="n">7 kunda sotuv</th><th></th></tr>
+{% for c in rows %}{% set l = c.last %}<tr>
+<td>{% if c.url %}<a href="{{ c.url }}" target="_blank" rel="noopener noreferrer">{{ c.title }}</a>{% else %}{{ c.title }}{% endif %}<div class="small muted">{{ c.shop or ('qo\'lda kiritiladi' if c.manual else '') }}{% if l %} · {{ l.day }}{% endif %}{% if l and l.rating %} · ⭐ {{ l.rating }}{% endif %}</div></td>
+<td class="small"><form method="post" action="/raqobat/{{c.id}}/bogla"><select name="my_sku_id" onchange="this.form.submit()" style="padding:5px 8px;font-size:13px;max-width:220px"><option value="">— bog'lanmagan —</option>{% for p in mine %}<option value="{{p.sku_id}}" {{ 'selected' if p.sku_id == c.my_sku_id }}>{{p.title}}</option>{% endfor %}</select></form></td>
+<td class="n"><b>{{ f(l.price) if l and l.price else '—' }}</b></td><td class="n">{{ f(c.mine.price) if c.mine else '—' }}</td>
+<td class="n">{% if c.diff is not none %}<span class="pill {{ 'p-loss' if c.diff <= -0.1 else 'p-ok' if c.diff >= 0.05 else 'p-nocost' }}">{{ '%+.0f'|format(c.diff*100) }}%</span>{% else %}—{% endif %}</td>
+<td class="n {{ 'neg' if c.price_change is not none and c.price_change < 0 }}">{% if c.price_change is none %}—{% elif c.price_change|abs < 0.005 %}0%{% else %}{{ '%+.0f%%'|format(c.price_change*100) }}{% endif %}</td>
+<td class="n">{% if l and l.stock is not none %}{% if l.stock == 0 %}<span class="pill p-ok">tugagan</span>{% else %}{{ l.stock }}{% endif %}{% else %}—{% endif %}</td>
+<td class="n">{{ c.sold7 if c.sold7 is not none else '—' }}</td>
+<td style="white-space:nowrap">{% if c.manual %}<form method="post" action="/raqobat/{{c.id}}/narx" style="display:inline-flex;gap:4px"><input class="sm" name="price" type="number" min="1" step="100" placeholder="yangi narx" required><button class="btn sm sec">✓</button></form>{% endif %}
+<form method="post" action="/raqobat/{{c.id}}/ochir" style="display:inline" onsubmit="return confirm('Kuzatuvdan olib tashlansinmi?')"><button class="btn sm bad">✕</button></form></td></tr>
+{% else %}<tr><td colspan="9" class="muted">Hali raqobatchi qo'shilmagan.</td></tr>{% endfor %}</table>
+<p class="small muted" style="margin:10px 0 0">Farq — raqobatchi narxi siznikidan necha foiz past (−) yoki baland (+). «7 kunda sotuv» — buyurtmalar sonining o'sishi (taxminiy).</p></div>
+<form class="card form" method="post" action="/raqobat">
+<div class="full"><b>Raqobatchi qo'shish</b></div>
+<div class="full"><label>Uzum'dagi tovar havolasi *</label><input name="link" required placeholder="https://uzum.uz/uz/product/termos-...-2203614"></div>
+<div><label>Qaysi tovarim bilan solishtirish</label><select name="my_sku_id"><option value="">— tanlang —</option>{% for p in mine %}<option value="{{p.sku_id}}">{{p.title}} ({{ f(p.price) }})</option>{% endfor %}</select></div>
+{% if not live %}<div><label>Raqobatchi tovar nomi *</label><input name="title" placeholder="Masalan: ThermoPro termos 1 L"></div>
+<div><label>Uning hozirgi narxi, so'm *</label><input name="price" type="number" min="1" step="100"></div>
+<div><label>Qoldig'i (bilsangiz)</label><input name="stock" type="number" min="0"></div>{% endif %}
+<div class="full"><button class="btn">+ Kuzatuvga qo'shish</button></div></form>
+{% endblock %}"""
+
+BOZOR = r"""{% extends "base.html" %}{% block title %}Bozor tahlili{% endblock %}{% block body %}
+<h1>Bozor tahlili</h1><p class="sub">Kalit so'z bo'yicha Uzum'dagi o'xshash tovarlar: narx oralig'i, talab, raqobat va qaysi narxda ko'proq sotilishi.</p>
+<form class="card" method="get" action="/bozor" style="display:flex;gap:10px;margin-bottom:14px"><input name="q" value="{{ q }}" placeholder="Masalan: termos, charm kamar, iPhone g'ilof" required><button class="btn" style="white-space:nowrap">🔍 Tahlil</button></form>
+{% if error %}<div class="banner" style="background:#eef3ff;color:#2a3f8f">ℹ️ {{ error }}</div>{% endif %}
+{% if a %}
+{% if a.source == 'demo' %}<p class="small muted">Namunaviy bozor ma'lumoti (demo).</p>{% endif %}
+<div class="grid g4">
+ <div class="card kpi"><div class="l">Nisha bahosi</div><div class="v">{{ a.score }}/10</div><div class="s">talab: {{ a.demand }} · raqobat: {{ a.competition }}</div></div>
+ <div class="card kpi"><div class="l">O'rtacha narx (mediana)</div><div class="v">{{ f(a.price_median) }}</div><div class="s">ko'pchilik {{ f(a.p25) }} – {{ f(a.p75) }} so'm</div></div>
+ <div class="card kpi"><div class="l">Tovarlar / sotuvchilar</div><div class="v">{{ a.count }} / {{ a.shops }}</div><div class="s">tugaganlar: {{ a.out_of_stock }}</div></div>
+ <div class="card kpi"><div class="l">Buyurtmalar (jami)</div><div class="v">{{ f(a.orders_total) }}</div><div class="s">top-3 ulushi {{ '%.0f'|format(a.top3_share*100) }}% · ⭐ {{ '%.1f'|format(a.avg_rating) }}</div></div>
+</div>
+<div class="card" style="margin-top:14px;border-color:#cbb8ff"><b>💡 Xulosa</b><p style="margin:8px 0 0">{{ a.advice }}</p>
+{% if a.mine %}<p style="margin:8px 0 0">Sizning «{{ a.mine.title }}» narxingiz {{ f(a.mine.price) }} so'm — bozor medianasidan <b class="{{ 'neg' if a.mine.vs > 0.15 else '' }}">{{ '%+.0f'|format(a.mine.vs*100) }}%</b>.{% if a.mine.min %} Zararsiz minimumingiz {{ f(a.mine.min) }} so'm.{% endif %}</p>{% endif %}</div>
+<div class="grid g2" style="margin-top:14px">
+<div class="card"><b>Narx segmentlari</b>{% set mx = [a.segments|map(attribute='per_item')|max, 1]|max %}
+{% for s in a.segments %}<div class="wf" style="grid-template-columns:150px 1fr auto"><span>{{ f(s.lo) }}–{{ f(s.hi) }}</span><div class="bar"><i style="width:{{ s.per_item/mx*100 }}%;{{ 'background:#14a05a' if a.best and s.lo==a.best.lo }}"></i></div><span class="small">{{ s.count }} tovar · {{ '%.0f'|format(s.per_item) }}/tovar</span></div>{% endfor %}
+<p class="small muted" style="margin:8px 0 0">Yashil — har bir tovarga eng ko'p buyurtma to'g'ri keladigan oraliq.</p></div>
+<div class="card tw"><b>Eng ko'p sotilganlar</b><table><tr><th>Tovar</th><th class="n">Narx</th><th class="n">Buyurtma</th><th class="n">⭐</th></tr>
+{% for i in a.top %}<tr><td class="small">{{ i.title }}<div class="muted">{{ i.shop }}</div></td><td class="n">{{ f(i.price) }}</td><td class="n">{{ f(i.orders) }}</td><td class="n">{{ i.rating }}</td></tr>{% endfor %}</table></div>
+</div>{% endif %}
+{% endblock %}"""
+
 KIRISH = r"""{% extends "base.html" %}{% block title %}Kirish{% endblock %}{% block body %}<div class="card" style="max-width:520px;margin:50px auto">
 <h1>Panelga kirish</h1>
 {% if expired %}<p class="neg">Bu havola eskirgan yoki allaqachon ishlatilgan.</p>{% endif %}
@@ -246,6 +296,7 @@ app.jinja_loader = DictLoader({
     "base.html": BASE, "dashboard.html": DASHBOARD, "products.html": PRODUCTS, "prices.html": PRICES,
     "card_form.html": CARD_FORM, "card_view.html": CARD_VIEW, "settings.html": SETTINGS,
     "login.html": LOGIN, "error.html": ERROR, "qarorlar.html": QARORLAR, "kirish.html": KIRISH,
+    "raqobat.html": RAQOBAT, "bozor.html": BOZOR,
 })
 app.jinja_env.filters["basename"] = lambda p: Path(p or "").name
 
@@ -350,6 +401,68 @@ def dashboard():
 @app.route("/qarorlar")
 def qarorlar():
     return render_template("qarorlar.html", items=checks.run_all(), names=checks.AGENT_NAMES)
+
+
+@app.route("/raqobat", methods=["GET", "POST"])
+def raqobat():
+    if request.method == "POST":
+        try:
+            sku = request.form.get("my_sku_id")
+            if sku and (not sku.isdigit() or int(sku) not in {p["sku_id"] for p in market.my_products()}):
+                raise ValueError("Bunday tovar sizda yo'q.")
+            market.add(request.form.get("link", ""), my_sku_id=int(sku) if sku else None,
+                       title=request.form.get("title"), price=request.form.get("price") or None,
+                       stock=request.form.get("stock"))
+            flash("Raqobatchi kuzatuvga qo'shildi")
+        except (ValueError, market.MarketUnavailable) as e:
+            flash(str(e), "error")
+        return redirect("/raqobat")
+    return render_template("raqobat.html", rows=market.overview(), mine=market.my_products(),
+                           live=market.live(), live_msg=market.LIVE_MSG)
+
+
+@app.route("/raqobat/<int:cid>/narx", methods=["POST"])
+def raqobat_narx(cid):
+    try:
+        if not market.record_price(cid, request.form.get("price") or 0):
+            abort(404)
+        flash("Narx yangilandi")
+    except ValueError as e:
+        flash(str(e), "error")
+    return redirect("/raqobat")
+
+
+@app.route("/raqobat/<int:cid>/bogla", methods=["POST"])
+def raqobat_bogla(cid):
+    sku = request.form.get("my_sku_id")
+    if sku and (not sku.isdigit() or int(sku) not in {p["sku_id"] for p in market.my_products()}):
+        abort(400)  # faqat o'z tovarim bilan bog'lash mumkin
+    if not db.link_competitor(cid, int(sku) if sku else None):
+        abort(404)
+    flash("Bog'landi")
+    return redirect("/raqobat")
+
+
+@app.route("/raqobat/<int:cid>/ochir", methods=["POST"])
+def raqobat_ochir(cid):
+    if not db.delete_competitor(cid):
+        abort(404)
+    flash("Kuzatuvdan olib tashlandi")
+    return redirect("/raqobat")
+
+
+@app.route("/bozor")
+def bozor():
+    q = (request.args.get("q") or "").strip()[:80]
+    a = error = None
+    if q:
+        try:
+            a = market.analyze(q)
+            if not a:
+                error = "Bu so'z bo'yicha tovar topilmadi."
+        except market.MarketUnavailable as e:
+            error = str(e)
+    return render_template("bozor.html", q=q, a=a, error=error)
 
 
 @app.route("/products", methods=["GET", "POST"])

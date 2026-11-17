@@ -30,6 +30,11 @@ python bot.py             # Telegram bot
 ```
 Windows uchun: `start_web.bat`, `start_bot.bat`. Batafsil: [README_UZ.md](README_UZ.md).
 
+## Raqobat va bozor tahlili
+- **Raqobatchi kuzatuvchisi** — Uzum'dagi raqobatchi tovar havolasini qo'shasiz, o'z tovaringizga bog'laysiz: narx farqi, 7 kunlik narx o'zgarishi, qoldig'i va sotuvi. Raqobatchi arzonlashsa, narxni tushirsa yoki tovari tugasa — «Qarorlar»ga signal (zararsiz minimum hisobga olinadi).
+- **Bozor tahlili** — kalit so'z bo'yicha: narx oralig'i, talab, raqobat (top-3 ulushi), eng ko'p sotiladigan narx segmenti, nisha bahosi 1–10 va sizning narxingiz bozorga nisbatan.
+- Ma'lumot manbasi `market.py` da: demo rejimda namunaviy bozor, haqiqiy do'konda raqobatchi narxi qo'lda kiritiladi. Uzum'da raqobatchilar uchun rasmiy API yo'q — ruxsat etilgan manba ulansa, faqat `_live_search` va `_live_product` yoziladi.
+
 ## Ko'p mijozli rejim
 Bitta bot va bitta veb-panel ko'p sotuvchiga xizmat qiladi, har birining ma'lumoti alohida:
 1. Sotuvchi botga `/start` yozadi → `/ulash` → Uzum API kalitini yuboradi (xabar darhol o'chiriladi, kalit shifrlanib saqlanadi) → do'konini tanlaydi.
