@@ -6,6 +6,7 @@ Ma'lumotlar Uzum API javoblari bilan bir xil tuzilishda.
 """
 import random
 import time
+from datetime import datetime, timedelta
 
 _DAY_MS = 24 * 3600 * 1000
 
@@ -67,16 +68,24 @@ def _build_orders(days: int = 400):
     now = int(time.time() * 1000)
     rows = []
     oid = 700000
+    today = datetime.now()
+    nxt = (today.replace(day=1) + timedelta(days=32)).replace(day=1)  # keyingi oy
     for d in range(days, -1, -1):
         day_ts = now - d * _DAY_MS
+        day = datetime.fromtimestamp(day_ts / 1000)
         season = 1.0 + 0.35 * (1 if (d % 365) in range(0, 20) else 0)  # mavsumiy cho'qqi
         for p in PRODUCTS:
             sku = p["skuList"][0]
-            n = int(rng.gauss(p["_daily"] * season, p["_daily"] * 0.5))
+            boost = season
+            if p["productId"] == 5004 and (day.year, day.month) == (nxt.year - 1, nxt.month):
+                boost *= 3  # termos: o'tgan yili keyingi oyda mavsum bo'lgan (mavsum agenti uchun)
+            n = int(rng.gauss(p["_daily"] * boost, p["_daily"] * 0.5))
             for _ in range(max(0, n)):
                 oid += 1
                 amount = 1
                 sell = sku["price"]
+                if p["productId"] == 5008 and d > 60:
+                    sell = 45000  # g'ilof: 60 kun oldin narx 45 000 → 49 000 ga ko'tarilgan (narx tajribasi uchun)
                 commission = int(sell * amount * p["_commission_rate"])
                 logistics = p["_logistics"] * amount
                 status = rng.choices(["TO_WITHDRAW", "PROCESSING", "CANCELED"], [0.86, 0.08, 0.06])[0]
